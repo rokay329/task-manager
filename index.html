@@ -161,6 +161,9 @@ body { font-family: -apple-system, 'Apple SD Gothic Neo', sans-serif; background
   background-repeat: no-repeat; background-position: right 14px center; padding-right: 40px;
 }
 
+/* ── 입력 필드 수직 중앙 정렬 ── */
+.field input, .field select { line-height: var(--field-h); }
+.field input::placeholder { line-height: normal; }
 /* 메모는 멀티라인 */
 .field textarea { height: calc(var(--field-h) * 1.8); padding-top: 12px; padding-bottom: 12px; line-height: 1.6; resize: none; }
 
@@ -348,7 +351,11 @@ body { font-family: -apple-system, 'Apple SD Gothic Neo', sans-serif; background
 <script>
 /* ── CONFIG ── */
 const CLIENT_ID = '868580176877-js9h7ke4dpoj9rv124jv2abndnp9dgcm.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email';
+const SCOPES = [
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/drive.appdata'
+].join(' ');
 
 /* ── 상태 ── */
 let tasks = [], archive = [], filter = 'all', editId = null;
@@ -359,7 +366,7 @@ let accessToken = null;
 /* ── 유틸 ── */
 const $ = id => document.getElementById(id);
 const today = () => new Date().toISOString().split('T')[0];
-const store = { get: k => JSON.parse(localStorage.getItem(k)||'null'), set: (k,v) => localStorage.setItem(k, JSON.stringify(v)) };
+const local = { get: k => JSON.parse(localStorage.getItem(k)||'null'), set: (k,v) => localStorage.setItem(k, JSON.stringify(v)) };
 
 function fmtDate(s) {
   if (!s) return '';
@@ -377,6 +384,60 @@ function fmtRange(t) {
 function fmtTime(t) { return t.startTime ? (t.endTime ? `${t.startTime}~${t.endTime}` : t.startTime) : ''; }
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function isOver(t) { const e=t.endDate||t.date; return !t.done && e && e<today(); }
+
+/* ── Google Drive 동기화 ── */
+const DRIVE_BASE = 'https://www.googleapis.com/drive/v3/files';
+const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
+let driveFileId = { tasks: null, archive: null };
+
+async function driveGet(filename) {
+  const res = await gFetch(`${DRIVE_BASE}?spaces=appDataFolder&q=name='${filename}'&fields=files(id)`);
+  return res?.files?.[0]?.id || null;
+}
+
+async function driveRead(filename) {
+  const id = await driveGet(filename);
+  if (!id) return null;
+  const res = await fetch(`${DRIVE_BASE}/${id}?alt=media`, { headers: { 'Authorization': `Bearer ${accessToken}` } });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+async function driveWrite(filename, data) {
+  const id = await driveGet(filename);
+  const body = JSON.stringify(data);
+  const meta = JSON.stringify({ name: filename, parents: id ? undefined : ['appDataFolder'] });
+  const form = new FormData();
+  form.append('metadata', new Blob([meta], { type: 'application/json' }));
+  form.append('file', new Blob([body], { type: 'application/json' }));
+  const url = id ? `${DRIVE_UPLOAD}/${id}?uploadType=multipart` : `${DRIVE_UPLOAD}?uploadType=multipart`;
+  await fetch(url, { method: id ? 'PATCH' : 'POST', headers: { 'Authorization': `Bearer ${accessToken}` }, body: form });
+}
+
+async function loadData() {
+  $('loading').classList.remove('off');
+  // Drive에서 불러오기, 실패 시 localStorage 폴백
+  try {
+    const [t, a] = await Promise.all([driveRead('tasks.json'), driveRead('archive.json')]);
+    tasks   = t || local.get('tasks')   || [];
+    archive = a || local.get('archive') || [];
+  } catch(e) {
+    tasks   = local.get('tasks')   || [];
+    archive = local.get('archive') || [];
+  }
+  $('loading').classList.add('off');
+  render(); updateBadge();
+}
+
+async function saveTasks() {
+  local.set('tasks', tasks); // 즉시 로컬 저장 (오프라인 대비)
+  try { await driveWrite('tasks.json', tasks); } catch(e) { console.warn('Drive 저장 실패', e); }
+}
+
+async function saveArchive() {
+  local.set('archive', archive);
+  try { await driveWrite('archive.json', archive); } catch(e) { console.warn('Drive 저장 실패', e); }
+}
 
 /* ── 초기화 ── */
 window.onload = () => {
@@ -405,11 +466,8 @@ function signIn() {
 function showApp() {
   $('loginScreen').classList.add('off');
   $('appMain').style.display = 'flex';
-  tasks = store.get('tasks') || [];
-  archive = store.get('archive') || [];
-  $('loading').classList.add('off');
-  render(); updateBadge();
-  const notif = store.get('notif');
+  loadData();
+  const notif = local.get('notif');
   if (notif) { setNotifUI(true); scheduleNotif(); }
 }
 
@@ -501,7 +559,7 @@ function clearSwipe(){if(swipedItem){swipedItem.classList.remove('swiped');swipe
 function toggleDone(id) {
   const idx=tasks.findIndex(t=>t.id===id); if(idx<0)return;
   tasks[idx].done=!tasks[idx].done; render();
-  syncDoneToCal(tasks[idx]).then(()=>store.set('tasks',tasks));
+  syncDoneToCal(tasks[idx]).then(()=>saveTasks());
 }
 
 function openModal(mode,id) {
@@ -545,7 +603,7 @@ async function saveTask() {
     task.calEventId=await createCalEvent(task);
     tasks.unshift(task);
   }
-  store.set('tasks',tasks); closeModal(); render(); btn.disabled=false;
+  saveTasks(); closeModal(); render(); btn.disabled=false;
   toast(editId?'태스크가 수정되었습니다':'추가 완료 · 캘린더에 등록됨');
 }
 
@@ -553,7 +611,7 @@ async function delTask(id) {
   if(!confirm('태스크를 삭제할까요?\n(캘린더 이벤트도 함께 삭제됩니다)'))return;
   const t=tasks.find(t=>t.id===id);
   if(t?.calEventId) await deleteCalEvent(t.calEventId);
-  tasks=tasks.filter(t=>t.id!==id); store.set('tasks',tasks); render(); toast('삭제되었습니다');
+  tasks=tasks.filter(t=>t.id!==id); saveTasks(); render(); toast('삭제되었습니다');
 }
 
 /* ── 알림 ── */
@@ -563,10 +621,10 @@ function toggleNotif() {
   if(!notifActive){
     if(!('Notification' in window)){toast('이 브라우저는 알림을 지원하지 않습니다',true);return;}
     Notification.requestPermission().then(p=>{
-      if(p==='granted'){setNotifUI(true);store.set('notif',true);scheduleNotif();toast('매일 08:00 알림이 설정되었습니다');}
+      if(p==='granted'){setNotifUI(true);local.set('notif',true);scheduleNotif();toast('매일 08:00 알림이 설정되었습니다');}
       else toast('알림 권한이 거부되었습니다',true);
     });
-  } else {setNotifUI(false);store.set('notif',false);toast('알림이 꺼졌습니다');}
+  } else {setNotifUI(false);local.set('notif',false);toast('알림이 꺼졌습니다');}
   closeDrop();
 }
 function setNotifUI(active){
@@ -595,7 +653,7 @@ function autoArchive(){
   toArc.forEach(t=>t.archivedAt=today());
   tasks=tasks.filter(t=>!toArc.find(a=>a.id===t.id));
   archive=[...toArc,...archive];
-  store.set('tasks',tasks);store.set('archive',archive);updateBadge();
+  saveTasks(); saveArchive(); updateBadge();
 }
 
 function openArchive(){autoArchive();renderArchive();$('archiveOverlay').classList.add('on');$('archivePanel').classList.add('on');document.body.style.overflow='hidden';}
@@ -632,9 +690,9 @@ function renderArchive(){
   }).join('');
 }
 
-function restoreTask(id){const t=archive.find(t=>t.id===id);if(!t)return;t.done=false;t.completedAt=null;t.archivedAt=null;tasks.unshift(t);archive=archive.filter(a=>a.id!==id);store.set('tasks',tasks);store.set('archive',archive);updateBadge();renderArchive();render();toast('태스크가 복원되었습니다');}
-async function delArchiveTask(id){if(!confirm('완전히 삭제할까요? 복구할 수 없습니다.'))return;const t=archive.find(a=>a.id===id);if(t?.calEventId)await deleteCalEvent(t.calEventId);archive=archive.filter(a=>a.id!==id);store.set('archive',archive);updateBadge();renderArchive();toast('삭제되었습니다');}
-async function clearArchive(){if(!confirm(`보관함 태스크 ${archive.length}개를 모두 삭제할까요?`))return;for(const t of archive)if(t.calEventId)await deleteCalEvent(t.calEventId);archive=[];store.set('archive',archive);updateBadge();renderArchive();toast('보관함을 비웠습니다');}
+function restoreTask(id){const t=archive.find(t=>t.id===id);if(!t)return;t.done=false;t.completedAt=null;t.archivedAt=null;tasks.unshift(t);archive=archive.filter(a=>a.id!==id);saveTasks();saveArchive();updateBadge();renderArchive();render();toast('태스크가 복원되었습니다');}
+async function delArchiveTask(id){if(!confirm('완전히 삭제할까요? 복구할 수 없습니다.'))return;const t=archive.find(a=>a.id===id);if(t?.calEventId)await deleteCalEvent(t.calEventId);archive=archive.filter(a=>a.id!==id);saveArchive();updateBadge();renderArchive();toast('삭제되었습니다');}
+async function clearArchive(){if(!confirm(`보관함 태스크 ${archive.length}개를 모두 삭제할까요?`))return;for(const t of archive)if(t.calEventId)await deleteCalEvent(t.calEventId);archive=[];saveArchive();updateBadge();renderArchive();toast('보관함을 비웠습니다');}
 
 /* ── 토스트 ── */
 function toast(msg,isErr){const el=$('toast');$('toastMsg').textContent=msg;$('toastIcon').className=isErr?'ti ti-alert-circle':'ti ti-check';el.className=`toast on${isErr?' err':''}`;setTimeout(()=>el.classList.remove('on'),3000);}
@@ -643,33 +701,39 @@ $('modalBg').addEventListener('click',e=>{if(e.target===$('modalBg'))closeModal(
 
 /* ── 바텀시트 드래그 닫기 ── */
 (()=>{
-  const modal=$('modal')||document.querySelector('.modal');
-  const handle=document.querySelector('.modal-handle');
-  if(!modal||!handle)return;
-  let startY=0, curY=0, dragging=false;
+  const modal = document.querySelector('.modal');
+  const handle = document.querySelector('.modal-handle');
+  if (!modal || !handle) return;
+  let startY = 0, curY = 0, dragging = false;
 
-  handle.addEventListener('touchstart',e=>{
-    startY=e.touches[0].clientY; curY=0; dragging=true;
-    modal.style.transition='none';
-  },{passive:true});
+  // 핸들 터치 영역 넓히기
+  handle.style.cssText += ';padding:16px 60px;margin:-16px auto;cursor:grab;';
 
-  handle.addEventListener('touchmove',e=>{
-    if(!dragging)return;
-    curY=e.touches[0].clientY-startY;
-    if(curY<0)curY=0;
-    modal.style.transform=`translateY(${curY}px)`;
-    // 배경 투명도 연동
-    const progress=Math.min(curY/300,1);
-    $('modalBg').style.opacity=1-progress*0.6;
-  },{passive:true});
+  handle.addEventListener('touchstart', e => {
+    startY = e.touches[0].clientY;
+    curY = 0; dragging = true;
+    modal.style.transition = 'none';
+  }, { passive: true });
 
-  handle.addEventListener('touchend',()=>{
-    if(!dragging)return;
-    dragging=false;
-    modal.style.transition='';
-    modal.style.transform='';
-    $('modalBg').style.opacity='';
-    if(curY>100)closeModal();
+  handle.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    curY = e.touches[0].clientY - startY;
+    if (curY < 0) curY = 0;
+    modal.style.transform = `translateY(${curY}px)`;
+    $('modalBg').style.opacity = String(1 - Math.min(curY / 300, 1) * 0.6);
+  }, { passive: true });
+
+  handle.addEventListener('touchend', () => {
+    if (!dragging) return;
+    dragging = false;
+    modal.style.transition = '';
+    if (curY > 100) {
+      modal.style.transform = `translateY(100%)`;
+      setTimeout(() => { modal.style.transform = ''; closeModal(); $('modalBg').style.opacity = ''; }, 280);
+    } else {
+      modal.style.transform = '';
+      $('modalBg').style.opacity = '';
+    }
   });
 })();
 </script>
