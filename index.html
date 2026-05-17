@@ -190,9 +190,10 @@ body { font-family: -apple-system, 'Apple SD Gothic Neo', sans-serif; background
 
 /* 어두운 버튼 — 흰색 오버레이로 hover/active 처리 */
 .btn-primary { background: var(--text); color: var(--card); border-color: var(--text); }
-.btn-primary::after { content: ''; position: absolute; inset: 0; background: rgba(255,255,255,0); transition: background 0.15s; }
+.btn-primary::after { content: ''; position: absolute; inset: 0; background: rgba(255,255,255,0); transition: background 0.15s; border-radius: inherit; }
 .btn-primary:hover::after { background: rgba(255,255,255,0.12); }
 .btn-primary:active::after { background: rgba(255,255,255,0.22); }
+.btn-primary:hover { background: var(--text); } /* hover 시 배경색 유지 */
 .btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 1.2rem; }
 
@@ -398,9 +399,20 @@ async function driveGet(filename) {
 async function driveRead(filename) {
   const id = await driveGet(filename);
   if (!id) return null;
-  const res = await fetch(`${DRIVE_BASE}/${id}?alt=media`, { headers: { 'Authorization': `Bearer ${accessToken}` } });
-  if (!res.ok) return null;
-  return res.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(`${DRIVE_BASE}/${id}?alt=media`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    return res.json();
+  } catch(e) {
+    clearTimeout(timer);
+    return null;
+  }
 }
 
 async function driveWrite(filename, data) {
@@ -415,18 +427,18 @@ async function driveWrite(filename, data) {
 }
 
 async function loadData() {
-  $('loading').classList.remove('off');
-  // Drive에서 불러오기, 실패 시 localStorage 폴백
   try {
     const [t, a] = await Promise.all([driveRead('tasks.json'), driveRead('archive.json')]);
     tasks   = t || local.get('tasks')   || [];
     archive = a || local.get('archive') || [];
   } catch(e) {
+    console.warn('Drive 로드 실패, 로컬 사용:', e);
     tasks   = local.get('tasks')   || [];
     archive = local.get('archive') || [];
+  } finally {
+    $('loading').classList.add('off');
+    render(); updateBadge();
   }
-  $('loading').classList.add('off');
-  render(); updateBadge();
 }
 
 async function saveTasks() {
@@ -443,7 +455,7 @@ async function saveArchive() {
 window.onload = () => {
   const d = new Date();
   $('dateLabel').textContent = `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일`;
-  const saved = store.get('token');
+  const saved = local.get('token');
   if (saved?.expires > Date.now()) { accessToken=saved.token; showApp(); }
   else { $('loading').classList.add('off'); $('loginScreen').classList.remove('off'); }
   document.addEventListener('click', e => { if (!e.target.closest('.header-right')) closeDrop(); if (!e.target.closest('.task-item')) clearSwipe(); });
@@ -457,7 +469,7 @@ function signIn() {
     callback: async resp => {
       if (resp.error) { toast('로그인 실패', true); return; }
       accessToken = resp.access_token;
-      store.set('token', { token: accessToken, expires: Date.now() + (resp.expires_in-60)*1000 });
+      local.set('token', { token: accessToken, expires: Date.now() + (resp.expires_in-60)*1000 });
       showApp();
     }
   }).requestAccessToken();
@@ -474,7 +486,7 @@ function showApp() {
 /* ── Google Calendar API ── */
 async function gFetch(url, opts={}) {
   const res = await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(opts.headers||{}) }});
-  if (res.status===401) { store.set('token',null); location.reload(); return; }
+  if (res.status===401) { local.set('token',null); location.reload(); return; }
   if (res.status===204) return;
   return res.json();
 }
