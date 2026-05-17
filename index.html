@@ -73,10 +73,18 @@ body { font-family: -apple-system, 'Apple SD Gothic Neo', sans-serif; background
 .stat-value.warn { color: var(--warn); }
 
 /* ── 필터 ── */
-.filters { display: flex; gap: 6px; padding: 0.8rem 1.2rem 0; flex-shrink: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.filters { display: flex; gap: 6px; padding: 0.8rem 1.2rem 0; flex-shrink: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; align-items: center; }
 .filters::-webkit-scrollbar { display: none; }
 .filter-btn { flex-shrink: 0; padding: 6px 14px; border-radius: 99px; border: 1.5px solid var(--border-md); background: transparent; font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: all 0.15s; }
 .filter-btn.on { background: var(--text); color: var(--card); border-color: var(--text); }
+.refresh-btn { margin-left: auto; flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; border: none; background: transparent; color: var(--hint); cursor: pointer; display: flex; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent; transition: color 0.15s; }
+.refresh-btn:hover { color: var(--accent); }
+.refresh-btn i { font-size: 16px; transition: transform 0.6s; }
+.refresh-btn.spinning i { transform: rotate(360deg); }
+
+/* 핸들 터치 영역 확장 */
+.modal-handle-wrap { position: relative; }
+.modal-handle-wrap::before { content: ''; position: absolute; inset: -16px -9999px; cursor: grab; }
 
 /* ── 태스크 리스트 ── */
 .task-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0.8rem 1.2rem; padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
@@ -293,6 +301,9 @@ body { font-family: -apple-system, 'Apple SD Gothic Neo', sans-serif; background
     <button class="filter-btn" onclick="setFilter('todo',this)">미완료</button>
     <button class="filter-btn" onclick="setFilter('done',this)">완료</button>
     <button class="filter-btn" onclick="setFilter('overdue',this)">기한 초과</button>
+    <button class="refresh-btn" onclick="refreshData()" id="refreshBtn" title="새로고침">
+      <i class="ti ti-refresh"></i>
+    </button>
   </div>
 
   <div class="task-scroll"><div id="taskWrap"></div></div>
@@ -716,6 +727,13 @@ $('modalBg').addEventListener('click',e=>{if(e.target===$('modalBg'))closeModal(
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && accessToken) loadData();
 });
+
+function refreshData() {
+  const btn = $('refreshBtn');
+  btn.classList.add('spinning');
+  setTimeout(() => btn.classList.remove('spinning'), 600);
+  loadData();
+}
 
 /* ── 바텀시트 드래그 닫기 ── */
 (()=>{
