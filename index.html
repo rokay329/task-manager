@@ -136,7 +136,8 @@ body { font-family: -apple-system, 'Apple SD Gothic Neo', sans-serif; background
 .modal-bg.on { opacity: 1; pointer-events: all; visibility: visible; }
 .modal { background: var(--card); width: 100%; max-width: 480px; border-radius: var(--r-xl) var(--r-xl) 0 0; padding: 1rem 1.4rem calc(1.5rem + env(safe-area-inset-bottom, 0px)); transform: translateY(20px); transition: transform 0.25s; max-height: 92dvh; overflow-y: auto; }
 .modal-bg.on .modal { transform: translateY(0); }
-.modal-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--border-md); margin: 0 auto 1.2rem; }
+.modal-handle-wrap { display: flex; justify-content: center; padding: 8px 0 4px; margin: -1rem -1.4rem 1rem; cursor: grab; }
+.modal-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--border-md); pointer-events: none; }
 .modal h2 { font-size: 17px; font-weight: 700; margin-bottom: 1.2rem; letter-spacing: -0.3px; }
 
 /* 폼 필드 */
@@ -313,7 +314,7 @@ body { font-family: -apple-system, 'Apple SD Gothic Neo', sans-serif; background
 <!-- 모달 -->
 <div class="modal-bg" id="modalBg">
   <div class="modal">
-    <div class="modal-handle"></div>
+    <div class="modal-handle-wrap"><div class="modal-handle"></div></div>
     <h2 id="modalTitle">새 태스크 추가</h2>
     <div class="field"><label>할 일</label><input type="text" id="taskInput" placeholder="태스크 내용 입력"></div>
     <div class="field">
@@ -711,33 +712,38 @@ function toast(msg,isErr){const el=$('toast');$('toastMsg').textContent=msg;$('t
 
 $('modalBg').addEventListener('click',e=>{if(e.target===$('modalBg'))closeModal();});
 
+/* ── 포커스 시 자동 동기화 ── */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && accessToken) loadData();
+});
+
 /* ── 바텀시트 드래그 닫기 ── */
 (()=>{
   const modal = document.querySelector('.modal');
-  const handle = document.querySelector('.modal-handle');
+  const handle = document.querySelector('.modal-handle-wrap');
   if (!modal || !handle) return;
   let startY = 0, curY = 0, dragging = false;
-
-  // 핸들 터치 영역 넓히기
-  handle.style.cssText += ';padding:16px 60px;margin:-16px auto;cursor:grab;';
 
   handle.addEventListener('touchstart', e => {
     startY = e.touches[0].clientY;
     curY = 0; dragging = true;
     modal.style.transition = 'none';
+    document.body.style.overflow = 'hidden'; // 배경 스크롤 막기
   }, { passive: true });
 
   handle.addEventListener('touchmove', e => {
     if (!dragging) return;
+    e.preventDefault(); // 배경 스크롤 방지
     curY = e.touches[0].clientY - startY;
     if (curY < 0) curY = 0;
     modal.style.transform = `translateY(${curY}px)`;
     $('modalBg').style.opacity = String(1 - Math.min(curY / 300, 1) * 0.6);
-  }, { passive: true });
+  }, { passive: false });
 
   handle.addEventListener('touchend', () => {
     if (!dragging) return;
     dragging = false;
+    document.body.style.overflow = '';
     modal.style.transition = '';
     if (curY > 100) {
       modal.style.transform = `translateY(100%)`;
@@ -748,6 +754,9 @@ $('modalBg').addEventListener('click',e=>{if(e.target===$('modalBg'))closeModal(
     }
   });
 })();
+</script>
+</body>
+</html>
 </script>
 </body>
 </html>
